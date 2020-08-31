@@ -1,0 +1,108 @@
+---
+- hosts: unifi-controller
+  vars:
+    LOCAL_HOSTNAME: 'node1'
+    LOCAL_FQDN_NAME: 'node1.ans.itsmind.dev'
+  tasks:
+    - name: Update packages
+      apt: update_cache=yes upgrade=dist
+    - name: Install a list of packages
+      apt:
+        pkg:
+          - ca-certificates
+          - apt-transport-https
+          - fail2ban
+    - name: Add Unifi Repo Key
+      apt_key:
+        keyserver: keyserver.ubuntu.com 
+        id: 06E85760C0A52C50
+    - name: Add MongoDB Keys
+      apt_key:
+        url: https://www.mongodb.org/static/pgp/server-3.4.asc
+        state: present
+    - name: Add unifi Repo
+      apt_repository:
+        repo: deb https://www.ui.com/downloads/unifi/debian stable ubiquiti
+        state: present
+        filename: 100-ubnt-unifi.list
+    - name: Add MongoDB Repo
+      apt_repository:
+        repo: deb https://repo.mongodb.org/apt/ubuntu xenial/mongodb-org/3.4 multiverse
+        state: present
+        filename: 100-mongodb-3.4.list
+    - name: Update packages
+      apt: update_cache=yes upgrade=dist
+    - name: Install Unifi Controller
+      apt: name=unifi state=latest
+    - name: start unifi controller
+      service:
+          name: unifi
+          state: started
+    - name: Install Unifi SSL Importer
+      template:
+        src: templates/unifi_ssl_import.sh.j2
+        dest: /usr/local/bin/unifi_ssl_import.sh
+    - name: Make Unifi SSL-Importer executable
+      file: dest=/usr/local/bin/unifi_ssl_import.sh mode=a+x
+    - name: ensure nginx is at the latest version
+      apt: name=nginx state=latest
+    - name: start nginx
+      service:
+          name: nginx
+          state: started
+    - name: install letsencrypt
+      apt: name=letsencrypt state=latest
+
+    - name: create letsencrypt directory
+      file: name=/var/www/letsencrypt state=directory
+
+    - name: Remove default nginx config
+      file: name=/etc/nginx/sites-enabled/default state=absent
+
+    - name: Install system nginx config
+      template:
+        src: templates/nginx.conf.j2
+        dest: /etc/nginx/nginx.conf
+
+    - name: Install nginx site for letsencrypt requests
+      template:
+        src: templates/nginx-http.j2
+        dest: /etc/nginx/sites-enabled/http
+
+    - name: Reload nginx to activate letsencrypt site
+      service: name=nginx state=restarted
+
+    - name: Create letsencrypt certificate
+      shell: letsencrypt certonly -n --webroot -w /var/www/letsencrypt -m {{ letsencrypt_email }} --agree-tos -d {{ domain_name }} --post-hook "/usr/local/bin/unifi_ssl_import.sh"
+      args:
+        creates: /etc/letsencrypt/live/{{ domain_name }}
+
+    - name: Generate dhparams
+      shell: openssl dhparam -out /etc/nginx/dhparams.pem 2048
+      args:
+        creates: /etc/nginx/dhparams.pem
+
+    - name: Install nginx site for specified site
+      template:
+        src: templates/nginx-le.j2
+        dest: /etc/nginx/sites-enabled/le
+
+    - name: Reload nginx to activate redirect
+      service: name=nginx state=restarted
+
+    - name: Add letsencrypt cronjob for cert renewal
+      cron:
+        name: letsencrypt_renewal
+        special_time: weekly
+        job: letsencrypt certonly -n --webroot -w /var/www/letsencrypt -m {{ letsencrypt_email }} --agree-tos -d {{ domain_name }} --post-hook "/usr/local/bin/unifi_ssl_import.sh" && service nginx reload 
+
+    - name: Install fail2ban unifi filter
+      template:
+        src: templates/fail2ban.ubiquiti.conf.j2
+        dest: /etc/fail2ban/filter.d/ubiquiti.conf
+    - name: Install fail2ban unifi jail
+      template:
+        src: templates/fail2ban.ubiquiti.jail.j2
+        dest: /etc/fail2ban/jail.d/unifi-controller.conf
+    - name: Reload fail2ban
+      service: name=fail2ban state=restarted

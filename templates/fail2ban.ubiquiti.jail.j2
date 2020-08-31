@@ -1,0 +1,9 @@
+[ubiquiti]
+enabled  = true
+filter   = ubiquiti
+logpath  = /var/log/unifi/server.log
+maxretry = 5
+bantime = 3600
+findtime = 900
+port = 8443
+banaction = iptables[name=ubiquiti, port=8443, protocol=tcp]

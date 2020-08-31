@@ -1,0 +1,9 @@
+# Fail2Ban filter for Ubiquiti UniFi
+#
+#
+
+[Definition]
+
+_daemon = unifi
+
+failregex =^.*Failed .* login .* <HOST>*\s*$
